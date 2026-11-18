@@ -7,8 +7,61 @@ import bcrypt
 from database import create_tables, connect_db, log_activity
 from rag_utils import upload_pdf, ask_question, get_general_answer, get_uploaded_pdfs
 
+
+
+def setup_cloud_admin():
+    try:
+        name = st.secrets["ZENTASK_ADMIN_NAME"]
+        email = st.secrets["ZENTASK_ADMIN_EMAIL"].strip().lower()
+        password = st.secrets["ZENTASK_ADMIN_PASSWORD"]
+    except (KeyError, FileNotFoundError):
+        return
+
+    if not all((name, email, password)):
+        return
+
+    if len(password) < 12:
+        raise ValueError("Admin password must be at least 12 characters.")
+
+    conn = connect_db()
+    try:
+        existing = conn.execute(
+            "SELECT user_id, role FROM users WHERE lower(email)=?",
+            (email,)
+        ).fetchone()
+
+        if existing:
+            if existing["role"].lower() != "admin":
+                hashed = bcrypt.hashpw(
+                    password.encode(), bcrypt.gensalt()
+                ).decode()
+                conn.execute(
+                    """UPDATE users
+                       SET name=?, password=?, role='Admin', is_active=1
+                       WHERE user_id=?""",
+                    (name, hashed, existing["user_id"])
+                )
+                conn.commit()
+                print("Existing account promoted to Admin.")
+        else:
+            hashed = bcrypt.hashpw(
+                password.encode(), bcrypt.gensalt()
+            ).decode()
+            conn.execute(
+                """INSERT INTO users
+                   (name, email, password, role, created_at, is_active)
+                   VALUES (?, ?, ?, 'Admin', datetime('now'), 1)""",
+                (name, email, hashed)
+            )
+            conn.commit()
+            print("Cloud Admin account created.")
+    finally:
+        conn.close()
+
+
 st.set_page_config(page_title='ZenTask | AI Study Assistant',layout='wide')
 create_tables()
+setup_cloud_admin()
 UPLOAD_DIR=Path('uploads'); UPLOAD_DIR.mkdir(exist_ok=True)
 
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
