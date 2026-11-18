@@ -67,11 +67,11 @@ UPLOAD_DIR=Path('uploads'); UPLOAD_DIR.mkdir(exist_ok=True)
 def now(): return datetime.now(timezone.utc).isoformat(timespec='seconds')
 def get_classes():
     c=connect_db()
-    try:return c.execute('SELECT class_id,class_name FROM classes ORDER BY class_id').fetchall()
+    try:return [dict(row) for row in c.execute('SELECT class_id,class_name FROM classes ORDER BY class_id').fetchall()]
     finally:c.close()
 def get_subjects(cid):
     c=connect_db()
-    try:return c.execute('SELECT subject_id,subject_name FROM subjects WHERE class_id=? ORDER BY subject_name',(cid,)).fetchall()
+    try:return [dict(row) for row in c.execute('SELECT subject_id,subject_name FROM subjects WHERE class_id=? ORDER BY subject_name',(cid,)).fetchall()]
     finally:c.close()
 def authenticate(email,password):
     c=connect_db()
@@ -249,7 +249,9 @@ else:
         elif page=='Overview':
             c=connect_db()
             try:
-                students=c.execute("SELECT COUNT(*) n FROM users WHERE role='Student' AND is_active=1").fetchone()['n']
+                students=c.execute(
+    "SELECT COUNT(*) n FROM users WHERE lower(role)='student' AND is_active=1"
+).fetchone()['n']
                 materials=c.execute("SELECT COUNT(*) n FROM study_materials WHERE is_active=1 AND visibility='shared'").fetchone()['n']
                 active=c.execute("SELECT COUNT(*) n FROM login_history WHERE status='active'").fetchone()['n']
             finally:c.close()
