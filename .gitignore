@@ -1,0 +1,53 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+backup_before_update/
+study_assistant_before_role_change.db
+# Virtual environments
+.venv/
+.venv311/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local databases and secrets
+.env
+*.db
+*.sqlite
+*.sqlite3
+
+# ChromaDB and test data
+chroma*/
+*_diagnostic/
+*_test/
+
+# Logs
+*.log
+
+# Backups and old files
+*backup*
+*old*
+*.bak
+
+# IDE settings
+.vscode/
+
+# Uploads
+uploads/
+
+# Local test files
+test_*.py
+check_*.py
+server_test.py
+register_user.py
+auth_app.py.1
+sample_ai_study_material.pdf
+developer application for learning.py
+.streamlit/
+
