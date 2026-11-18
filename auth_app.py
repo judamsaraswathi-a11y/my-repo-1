@@ -25,36 +25,52 @@ def setup_cloud_admin():
 
     conn = connect_db()
     try:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS app_settings (
+                setting_key TEXT PRIMARY KEY,
+                setting_value TEXT
+            )
+        """)
+
+        done = conn.execute(
+            "SELECT setting_value FROM app_settings WHERE setting_key=?",
+            ("cloud_admin_bootstrap_done",)
+        ).fetchone()
+
+        if done:
+            return
+
         existing = conn.execute(
-            "SELECT user_id, role FROM users WHERE lower(email)=?",
+            "SELECT user_id FROM users WHERE lower(email)=?",
             (email,)
         ).fetchone()
 
+        hashed = bcrypt.hashpw(
+            password.encode(), bcrypt.gensalt()
+        ).decode()
+
         if existing:
-            if existing["role"].lower() != "admin":
-                hashed = bcrypt.hashpw(
-                    password.encode(), bcrypt.gensalt()
-                ).decode()
-                conn.execute(
-                    """UPDATE users
-                       SET name=?, password=?, role='Admin', is_active=1
-                       WHERE user_id=?""",
-                    (name, hashed, existing["user_id"])
-                )
-                conn.commit()
-                print("Existing account promoted to Admin.")
+            conn.execute(
+                """UPDATE users
+                   SET name=?, password=?, role='Admin', is_active=1
+                   WHERE user_id=?""",
+                (name, hashed, existing["user_id"])
+            )
+            print("Cloud Admin account synchronized.")
         else:
-            hashed = bcrypt.hashpw(
-                password.encode(), bcrypt.gensalt()
-            ).decode()
             conn.execute(
                 """INSERT INTO users
                    (name, email, password, role, created_at, is_active)
                    VALUES (?, ?, ?, 'Admin', datetime('now'), 1)""",
                 (name, email, hashed)
             )
-            conn.commit()
             print("Cloud Admin account created.")
+
+        conn.execute(
+            "INSERT INTO app_settings(setting_key, setting_value) VALUES (?, ?)",
+            ("cloud_admin_bootstrap_done", "yes")
+        )
+        conn.commit()
     finally:
         conn.close()
 
