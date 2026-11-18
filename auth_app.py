@@ -138,8 +138,115 @@ else:
     st.sidebar.write(f"Signed in: **{user['name']}**")
     if st.sidebar.button('Logout'):logout()
     if user['role'].lower()=='admin':
-        page=st.sidebar.radio('Admin Menu',['Overview','Manage Subjects','Upload Study PDFs','Student Activity'])
-        if page=='Overview':
+        page=st.sidebar.radio(
+            'Admin Menu',
+            ['Overview', 'Admin Profile', 'Student Management',
+             'Manage Subjects', 'Upload Study PDFs', 'Student Activity']
+        )
+        if page == 'Admin Profile':
+            st.header('Admin Profile')
+            st.caption('View and update your account details.')
+            profile_conn = connect_db()
+            try:
+                profile = profile_conn.execute(
+                    'SELECT name, email, role FROM users WHERE user_id=?',
+                    (user['user_id'],)
+                ).fetchone()
+            finally:
+                profile_conn.close()
+
+            if profile:
+                st.write(f"**Account role:** {profile['role']}")
+                with st.form('admin_profile_form'):
+                    updated_name = st.text_input('Full name', value=profile['name'])
+                    updated_email = st.text_input('Email address', value=profile['email'])
+                    save_profile = st.form_submit_button('Save profile')
+                if save_profile:
+                    if not updated_name.strip() or not updated_email.strip():
+                        st.error('Name and email are required.')
+                    else:
+                        profile_conn = connect_db()
+                        try:
+                            profile_conn.execute(
+                                'UPDATE users SET name=?, email=? WHERE user_id=?',
+                                (updated_name.strip(), updated_email.strip().lower(),
+                                 user['user_id'])
+                            )
+                            profile_conn.commit()
+                            st.session_state.user['name'] = updated_name.strip()
+                            st.success('Profile updated successfully.')
+                            st.rerun()
+                        except Exception:
+                            st.error('Could not update profile. The email may already be in use.')
+                        finally:
+                            profile_conn.close()
+
+                st.divider()
+                st.subheader('Change password')
+                with st.form('admin_password_form'):
+                    current_password = st.text_input('Current password', type='password')
+                    new_password = st.text_input('New password (minimum 12 characters)', type='password')
+                    confirm_password = st.text_input('Confirm new password', type='password')
+                    change_password = st.form_submit_button('Update password')
+                if change_password:
+                    if not current_password or not new_password or not confirm_password:
+                        st.error('Complete all password fields.')
+                    elif len(new_password) < 12:
+                        st.error('New password must contain at least 12 characters.')
+                    elif new_password != confirm_password:
+                        st.error('New passwords do not match.')
+                    else:
+                        password_conn = connect_db()
+                        try:
+                            stored = password_conn.execute(
+                                'SELECT password FROM users WHERE user_id=?',
+                                (user['user_id'],)
+                            ).fetchone()
+                            if not stored or not bcrypt.checkpw(
+                                current_password.encode(), stored['password'].encode()
+                            ):
+                                st.error('Current password is incorrect.')
+                            else:
+                                new_hash = bcrypt.hashpw(
+                                    new_password.encode(), bcrypt.gensalt()
+                                ).decode()
+                                password_conn.execute(
+                                    'UPDATE users SET password=? WHERE user_id=?',
+                                    (new_hash, user['user_id'])
+                                )
+                                password_conn.commit()
+                                st.success('Password changed successfully.')
+                        finally:
+                            password_conn.close()
+
+        elif page == 'Student Management':
+            st.header('Student Management')
+            st.caption('View registered student accounts.')
+            students_conn = connect_db()
+            try:
+                student_rows = students_conn.execute(
+                    """SELECT user_id, name, email, created_at, is_active
+                       FROM users WHERE lower(role)='student'
+                       ORDER BY user_id DESC"""
+                ).fetchall()
+            finally:
+                students_conn.close()
+            if student_rows:
+                st.dataframe(
+                    [{
+                        'Student ID': row['user_id'],
+                        'Name': row['name'],
+                        'Email': row['email'],
+                        'Registered': row['created_at'] or '—',
+                        'Status': 'Active' if row['is_active'] else 'Inactive'
+                    } for row in student_rows],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            else:
+                st.info('No student accounts are registered in this database yet.')
+
+        elif page=='Overview':
             c=connect_db()
             try:
                 students=c.execute("SELECT COUNT(*) n FROM users WHERE role='Student' AND is_active=1").fetchone()['n']
