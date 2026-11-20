@@ -18,6 +18,7 @@ def _connect():
     c=sqlite3.connect(str(VECTOR_DB_PATH),timeout=30); c.row_factory=sqlite3.Row
     c.execute("PRAGMA busy_timeout=30000"); c.execute("PRAGMA journal_mode=WAL")
     c.execute("CREATE TABLE IF NOT EXISTS vectors (id TEXT PRIMARY KEY, document TEXT NOT NULL, embedding TEXT NOT NULL, metadata TEXT NOT NULL)")
+    c.execute("CREATE TABLE IF NOT EXISTS embedding_cache (cache_key TEXT PRIMARY KEY, embedding TEXT NOT NULL)")
     c.commit(); return c
 
 def get_gemini_client():
@@ -49,15 +50,78 @@ def _retry(fn,label):
             time.sleep(min(2**(attempt-1),20))
 
 def embed_texts(texts,task_type='RETRIEVAL_DOCUMENT'):
-    if not texts:return []
-    client=get_gemini_client(); output=[]
-    for start in range(0,len(texts),EMBEDDING_BATCH_SIZE):
-        batch=texts[start:start+EMBEDDING_BATCH_SIZE]
-        response=_retry(lambda:client.models.embed_content(model=EMBEDDING_MODEL,contents=batch,config=types.EmbedContentConfig(task_type=task_type)), 'Gemini embedding')
-        if not getattr(response,'embeddings',None): raise RuntimeError('Gemini returned no embeddings')
-        output.extend([[float(v) for v in item.values] for item in response.embeddings])
-    if len(output)!=len(texts):raise RuntimeError('Embedding count mismatch')
-    return output
+    if not texts:
+        return []
+
+    conn = _connect()
+    try:
+        keys = [
+            hashlib.sha256(
+                f"{EMBEDDING_MODEL}:{task_type}:{text}".encode("utf-8")
+            ).hexdigest()
+            for text in texts
+        ]
+
+        cache_rows = conn.execute(
+            "SELECT cache_key, embedding FROM embedding_cache WHERE cache_key IN ({})".format(
+                ",".join("?" for _ in set(keys))
+            ),
+            list(set(keys))
+        ).fetchall()
+
+        cache = {
+            row["cache_key"]: json.loads(row["embedding"])
+            for row in cache_rows
+        }
+
+        missing = {}
+        for key, text in zip(keys, texts):
+            if key not in cache:
+                missing.setdefault(key, text)
+
+        if missing:
+            missing_keys = list(missing.keys())
+            missing_texts = list(missing.values())
+            new_vectors = []
+
+            client = get_gemini_client()
+            for start in range(0, len(missing_texts), EMBEDDING_BATCH_SIZE):
+                batch = missing_texts[start:start + EMBEDDING_BATCH_SIZE]
+                response = _retry(
+                    lambda batch=batch: client.models.embed_content(
+                        model=EMBEDDING_MODEL,
+                        contents=batch,
+                        config=types.EmbedContentConfig(task_type=task_type)
+                    ),
+                    "Gemini embedding"
+                )
+
+                if not getattr(response, "embeddings", None):
+                    raise RuntimeError("Gemini returned no embeddings")
+
+                new_vectors.extend([
+                    [float(v) for v in item.values]
+                    for item in response.embeddings
+                ])
+
+            if len(new_vectors) != len(missing_texts):
+                raise RuntimeError("Embedding count mismatch")
+
+            conn.executemany(
+                "INSERT OR REPLACE INTO embedding_cache(cache_key, embedding) VALUES(?, ?)",
+                [
+                    (key, json.dumps(vector, separators=(",", ":")))
+                    for key, vector in zip(missing_keys, new_vectors)
+                ]
+            )
+            conn.commit()
+
+            cache.update(dict(zip(missing_keys, new_vectors)))
+
+        return [cache[key] for key in keys]
+
+    finally:
+        conn.close()
 
 def upload_pdf(pdf_bytes,filename,uploader=None,class_id=None,subject_id=None,material_type='textbook'):
     if not pdf_bytes:return {'status':'error','message':'PDF is empty.'}
@@ -69,8 +133,19 @@ def upload_pdf(pdf_bytes,filename,uploader=None,class_id=None,subject_id=None,ma
             rows=conn.execute('SELECT metadata FROM vectors').fetchall()
             for row in rows:
                 m=json.loads(row['metadata'] or '{}')
-                if m.get('file_hash')==digest and m.get('class_id')==int(class_id) and m.get('subject_id')==int(subject_id) and m.get('material_type')==material_type and m.get('admin_approved') is True:
+                if m.get('file_hash')==digest and m.get('class_id')==int(class_id) and m.get('subject_id')==int(subject_id) and m.get('admin_approved') is True:
                     return {'status':'duplicate','message':f'{filename} already uploaded for this class and subject.'}
+            if material_type == 'textbook':
+                for row in rows:
+                    m = json.loads(row['metadata'] or '{}')
+                    if (m.get('admin_approved') is True
+                        and m.get('class_id') == int(class_id)
+                        and m.get('subject_id') == int(subject_id)
+                        and m.get('material_type') == 'textbook'):
+                        return {
+                            'status': 'duplicate',
+                            'message': 'A textbook PDF already exists for this class and subject. Only one textbook is allowed.'
+                        }
         finally:conn.close()
         reader=PdfReader(io.BytesIO(pdf_bytes)); chunks=[]
         for page_no,page in enumerate(reader.pages,1):

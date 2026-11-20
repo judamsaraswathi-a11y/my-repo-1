@@ -49,6 +49,16 @@ def create_tables():
             FOREIGN KEY (uploaded_by) REFERENCES users(user_id)
         );
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS parent_student_links (
+                link_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                parent_user_id INTEGER NOT NULL UNIQUE,
+                student_user_id INTEGER NOT NULL,
+                linked_at TEXT NOT NULL,
+                FOREIGN KEY (parent_user_id) REFERENCES users(user_id),
+                FOREIGN KEY (student_user_id) REFERENCES users(user_id)
+            )
+        """)
         _add_column(conn, "users", "created_at", "TEXT")
         _add_column(conn, "users", "is_active", "INTEGER NOT NULL DEFAULT 1")
         _add_column(conn, "users", "class_id", "INTEGER")

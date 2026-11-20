@@ -3,3 +3,4 @@ bcrypt
 google-genai
 pypdf
 python-dotenv
+streamlit[pdf]
